@@ -1,427 +1,543 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
-import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
+from datetime import datetime
 import os
-import random
-import warnings
-warnings.filterwarnings('ignore')
 
-# Configuration
+# ============================================================
+# CONFIGURATION DE LA PAGE
+# ============================================================
 st.set_page_config(
-    page_title="Gestion des Ventes - INF232 EC2",
-    page_icon="🛍️",
+    page_title="Analyse Ventes - Intelligence Commerciale",
+    page_icon="📊",
     layout="wide"
 )
 
-# Créer dossier data
-if not os.path.exists('data'):
-    os.makedirs('data')
+# ============================================================
+# STYLE CSS PERSONNALISÉ (Design unique)
+# ============================================================
+st.markdown("""
+<style>
+    /* Fond général */
+    .stApp {
+        background: linear-gradient(180deg, #0F172A 0%, #1E293B 100%);
+    }
+    
+    /* Titre principal */
+    h1 {
+        color: #F59E0B;
+        font-family: 'Georgia', serif;
+        text-align: center;
+        font-size: 3rem;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        border-bottom: 2px solid #F59E0B;
+        padding-bottom: 15px;
+    }
+    
+    /* Sous-titres */
+    h2, h3 {
+        color: #FCD34D;
+        font-family: 'Georgia', serif;
+    }
+    
+    /* Texte normal */
+    p, span, div {
+        color: #CBD5E1;
+    }
+    
+    /* Labels des inputs */
+    .stTextInput label, .stNumberInput label, .stSelectbox label {
+        color: #FCD34D !important;
+        font-weight: bold;
+    }
+    
+    /* Cases de saisie */
+    .stTextInput input, .stNumberInput input {
+        background-color: #334155;
+        color: white;
+        border: 2px solid #475569;
+        border-radius: 10px;
+        padding: 10px;
+    }
+    
+    /* Boutons */
+    .stButton > button {
+        background: linear-gradient(135deg, #F59E0B, #D97706);
+        color: #0F172A;
+        font-weight: bold;
+        border: none;
+        border-radius: 25px;
+        padding: 12px 30px;
+        font-size: 16px;
+        transition: all 0.3s;
+        box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4);
+    }
+    
+    .stButton > button:hover {
+        background: linear-gradient(135deg, #FCD34D, #F59E0B);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(245, 158, 11, 0.6);
+    }
+    
+    /* Cartes */
+    .css-1r6slb0 {
+        background: #1E293B;
+        border-radius: 15px;
+        padding: 20px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        border: 1px solid #334155;
+    }
+    
+    /* Tableaux */
+    .stDataFrame {
+        background-color: #1E293B;
+        border-radius: 15px;
+        overflow: hidden;
+    }
+    
+    .stDataFrame th {
+        background-color: #F59E0B !important;
+        color: #0F172A !important;
+        font-weight: bold;
+    }
+    
+    /* Messages */
+    .stSuccess {
+        background-color: #065F46;
+        color: #D1FAE5;
+        border-left: 5px solid #10B981;
+        border-radius: 10px;
+    }
+    
+    .stWarning {
+        background-color: #78350F;
+        color: #FEF3C7;
+        border-left: 5px solid #F59E0B;
+        border-radius: 10px;
+    }
+    
+    .stError {
+        background-color: #7F1D1D;
+        color: #FEE2E2;
+        border-left: 5px solid #EF4444;
+        border-radius: 10px;
+    }
+    
+    .stInfo {
+        background-color: #1E3A5F;
+        color: #DBEAFE;
+        border-left: 5px solid #3B82F6;
+        border-radius: 10px;
+    }
+    
+    /* Métriques */
+    .stMetric {
+        background: linear-gradient(135deg, #1E293B, #334155);
+        border-radius: 15px;
+        padding: 15px;
+        border: 1px solid #475569;
+    }
+    
+    /* Sidebar */
+    .css-1d391kg {
+        background-color: #0F172A;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# Base de données
-def init_db():
-    conn = sqlite3.connect('data/ventes.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS produits
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT, categorie TEXT,
-                  prix_unitaire REAL, cout_revient REAL, stock INTEGER, date_ajout TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS ventes
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, produit_id INTEGER, quantite INTEGER,
-                  prix_vente REAL, remise REAL DEFAULT 0, client TEXT,
-                  date_vente TIMESTAMP DEFAULT CURRENT_TIMESTAMP, mode_paiement TEXT,
-                  region TEXT, vendeur TEXT, FOREIGN KEY (produit_id) REFERENCES produits (id))''')
-    c.execute('''CREATE TABLE IF NOT EXISTS clients
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, nom TEXT, email TEXT, telephone TEXT,
-                  ville TEXT, region TEXT, type_client TEXT, date_inscription TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    conn.commit()
-    conn.close()
+# ============================================================
+# INITIALISATION DE LA MÉMOIRE (Session State)
+# ============================================================
+if "produits" not in st.session_state:
+    st.session_state.produits = []
 
-init_db()
+if "ventes" not in st.session_state:
+    st.session_state.ventes = {}
 
-# Sidebar
-with st.sidebar:
-    st.title("📋 INF232 EC2")
-    st.markdown("---")
-    
-    # Navigation par selectbox
-    page = st.selectbox("📂 Navigation", [
-        "🏠 Accueil",
-        "📊 Collecte de données",
-        "📈 Analyse descriptive",
-        "🔍 Classification",
-        "📉 Réduction dimension"
-    ])
-    
-    st.markdown("---")
-    
-    # Données démo
-    if st.button("📥 Charger données démo", use_container_width=True):
-        conn = sqlite3.connect('data/ventes.db')
-        c = conn.cursor()
-        nb = pd.read_sql("SELECT COUNT(*) as count FROM produits", conn)['count'][0]
-        
-        if nb == 0:
-            produits_demo = [
-                ("Smartphone Pro Max", "Électronique", 250000, 180000, 25),
-                ("Riz Basmati 5kg", "Alimentation", 8500, 6000, 100),
-                ("T-shirt Premium", "Vêtements", 12000, 7000, 50),
-                ("Crème visage bio", "Cosmétiques", 15000, 9000, 30),
-                ("Bureau en bois massif", "Meubles", 250000, 150000, 10),
-                ("Ordinateur portable", "Électronique", 450000, 350000, 8),
-                ("Huile d'olive 1L", "Alimentation", 6000, 4000, 60),
-                ("Jean slim", "Vêtements", 18000, 10000, 35),
-                ("Parfum de luxe", "Cosmétiques", 35000, 20000, 15),
-                ("Lampe design LED", "Meubles", 45000, 25000, 20)
-            ]
-            for prod in produits_demo:
-                c.execute("INSERT INTO produits (nom, categorie, prix_unitaire, cout_revient, stock) VALUES (?, ?, ?, ?, ?)", prod)
-            
-            clients_demo = [
-                ("Marie Dupont", "marie@email.com", "699887766", "Yaoundé", "Centre", "Particulier"),
-                ("Tech Solutions", "tech@email.com", "677665544", "Douala", "Littoral", "Entreprise"),
-                ("Jean Michel", "jean@email.com", "688554433", "Garoua", "Nord", "Grossiste"),
-                ("Sarah Koné", "sarah@email.com", "699443322", "Bafoussam", "Ouest", "Détaillant"),
-                ("Global Trading", "global@email.com", "677332211", "Douala", "Littoral", "Entreprise"),
-                ("Pierre Amougou", "pierre@email.com", "688221100", "Ebolowa", "Sud", "Particulier"),
-                ("Alice Banga", "alice@email.com", "699009988", "Bertoua", "Est", "Particulier"),
-                ("Distribution Pro", "dist@email.com", "677887766", "Yaoundé", "Centre", "Grossiste")
-            ]
-            for client in clients_demo:
-                c.execute("INSERT INTO clients (nom, email, telephone, ville, region, type_client) VALUES (?, ?, ?, ?, ?, ?)", client)
-            
-            date_debut = datetime.now() - timedelta(days=30)
-            for i in range(50):
-                produit_id = random.randint(1, 10)
-                client_nom = random.choice([cl[0] for cl in clients_demo])
-                quantite = random.randint(1, 5)
-                remise = random.choice([0, 0, 0, 5, 10])
-                mode = random.choice(["Espèces", "Mobile Money", "Carte bancaire"])
-                region = random.choice([cl[4] for cl in clients_demo])
-                vendeur = random.choice(["Alice", "Bob", "Charlie"])
-                prix_base = [p[2] for p in produits_demo][produit_id-1]
-                prix_final = prix_base * (1 - remise/100)
-                date_vente = date_debut + timedelta(days=random.randint(0, 30))
-                c.execute("INSERT INTO ventes (produit_id, quantite, prix_vente, remise, client, mode_paiement, region, vendeur, date_vente) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                         (produit_id, quantite, prix_final, remise, client_nom, mode, region, vendeur, date_vente))
-            conn.commit()
-            st.success("✅ 50 ventes de démonstration ajoutées !")
-            st.rerun()
-        else:
-            st.warning("Des données existent déjà !")
-        conn.close()
-    
-    st.info("INF232 EC2 - Analyse de données")
+if "stocks" not in st.session_state:
+    st.session_state.stocks = {}
 
-# ==================== PAGE ACCUEIL ====================
-if page == "🏠 Accueil":
-    st.title("🛍️ Application de Gestion des Ventes")
-    st.markdown("---")
+if "historique" not in st.session_state:
+    st.session_state.historique = []
+
+# ============================================================
+# FICHIER DE SAUVEGARDE PERMANENTE
+# ============================================================
+FICHIER_HISTORIQUE = "historique_ventes.csv"
+
+def charger_historique():
+    if os.path.exists(FICHIER_HISTORIQUE):
+        df = pd.read_csv(FICHIER_HISTORIQUE)
+        return df.to_dict('records')
+    return []
+
+def sauvegarder_historique():
+    if len(st.session_state.historique) > 0:
+        df = pd.DataFrame(st.session_state.historique)
+        df.to_csv(FICHIER_HISTORIQUE, index=False)
+
+# Charger l'historique au démarrage
+if len(st.session_state.historique) == 0:
+    st.session_state.historique = charger_historique()
+
+# ============================================================
+# BANNIÈRE PRINCIPALE
+# ============================================================
+st.markdown("""
+<div style="
+    background: linear-gradient(135deg, #F59E0B, #D97706, #B45309);
+    padding: 40px;
+    border-radius: 20px;
+    text-align: center;
+    margin-bottom: 30px;
+    box-shadow: 0 10px 30px rgba(245, 158, 11, 0.3);
+">
+    <h1 style="color: #0F172A; border: none; font-size: 3rem; margin: 0; text-shadow: none;">
+        📊 ANALYSE VENTES PRO
+    </h1>
+    <p style="color: #0F172A; font-size: 1.3rem; margin-top: 10px; font-weight: bold;">
+        Identifiez vos produits stars • Maximisez vos profits • Dominez votre marché
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
+# ============================================================
+# ONGLETS DE NAVIGATION
+# ============================================================
+onglet = st.radio(
+    "📋 NAVIGATION",
+    ["🏠 Accueil", "📦 Gérer mes produits", "💰 Saisir les ventes", "📈 Analyse & Résultats", "📜 Historique"],
+    horizontal=True,
+    label_visibility="collapsed"
+)
+
+# ============================================================
+# ONGLET 1 : ACCUEIL
+# ============================================================
+if onglet == "🏠 Accueil":
     
-    conn = sqlite3.connect('data/ventes.db')
-    total_ventes = pd.read_sql("SELECT COUNT(*) as count FROM ventes", conn)['count'][0]
-    ca_total = pd.read_sql("SELECT COALESCE(SUM(prix_vente * quantite), 0) as total FROM ventes", conn)['total'][0]
-    nb_produits = pd.read_sql("SELECT COUNT(*) as count FROM produits", conn)['count'][0]
-    nb_clients = pd.read_sql("SELECT COUNT(*) as count FROM clients", conn)['count'][0]
-    conn.close()
+    col1, col2 = st.columns(2)
     
-    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("📊 Total Ventes", f"{total_ventes:,}")
+        st.markdown("""
+        <div style="
+            background: #1E293B;
+            padding: 30px;
+            border-radius: 15px;
+            border: 1px solid #334155;
+            height: 100%;
+        ">
+            <h2 style="color: #FCD34D;">🎯 COMMENT ÇA MARCHE ?</h2>
+            <p style="font-size: 1.1rem;">
+                1️⃣ <b>Ajoutez vos produits</b> avec leur prix<br>
+                2️⃣ <b>Saisissez vos ventes</b> de la semaine<br>
+                3️⃣ <b>Recevez une analyse</b> détaillée<br>
+                4️⃣ <b>Suivez l'évolution</b> dans l'historique
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    
     with col2:
-        st.metric("💰 Chiffre d'Affaires", f"{ca_total:,.0f} FCFA")
-    with col3:
-        st.metric("📦 Produits", f"{nb_produits:,}")
-    with col4:
-        st.metric("👥 Clients", f"{nb_clients:,}")
+        nb_produits = len(st.session_state.produits)
+        nb_semaines = len(st.session_state.historique)
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("📦 Produits enregistrés", nb_produits)
+        with col_b:
+            st.metric("📅 Semaines suivies", nb_semaines)
+        
+        if nb_produits == 0:
+            st.warning("👆 Commencez par ajouter vos produits !")
+        elif len(st.session_state.ventes) == 0:
+            st.info("📊 Prêt à saisir vos ventes !")
+        else:
+            st.success("✅ Analyse disponible dans l'onglet Résultats !")
     
-    st.markdown("---")
-    st.header("Bienvenue !")
-    st.write("""
-    Cette application permet de :
-    - 📊 **Collecter** des données de ventes
-    - 📈 **Analyser** les performances
-    - 🔍 **Classifier** les clients
-    - 📉 **Réduire** les dimensions
+    st.divider()
     
-    👈 Utilisez le menu de navigation à gauche pour commencer !
-    """)
+    st.markdown("""
+    <div style="text-align: center; color: #94A3B8; margin-top: 30px;">
+        <p style="font-size: 1.2rem;">
+            💡 <b>Le saviez-vous ?</b> Les commerces qui analysent leurs ventes 
+            augmentent leur chiffre d'affaires de 15% en moyenne.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
-# ==================== PAGE COLLECTE ====================
-elif page == "📊 Collecte de données":
-    st.title("📊 Collecte de Données de Vente")
+# ============================================================
+# ONGLET 2 : GÉRER LES PRODUITS
+# ============================================================
+elif onglet == "📦 Gérer mes produits":
     
-    if 'form_type' not in st.session_state:
-        st.session_state.form_type = None
+    st.markdown("<h2 style='color: #FCD34D;'>📦 AJOUTER UN PRODUIT</h2>", unsafe_allow_html=True)
     
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("🛍️ Nouvelle Vente", use_container_width=True):
-            st.session_state.form_type = 'vente'
-    with col2:
-        if st.button("📦 Nouveau Produit", use_container_width=True):
-            st.session_state.form_type = 'produit'
-    with col3:
-        if st.button("👤 Nouveau Client", use_container_width=True):
-            st.session_state.form_type = 'client'
-    
-    st.markdown("---")
-    
-    if st.session_state.form_type == 'vente':
-        st.subheader("🛍️ Enregistrer une Vente")
-        conn = sqlite3.connect('data/ventes.db')
-        produits_df = pd.read_sql("SELECT id, nom, prix_unitaire, stock FROM produits WHERE stock > 0", conn)
-        clients_df = pd.read_sql("SELECT id, nom FROM clients", conn)
-        conn.close()
+    with st.form("form_produit", clear_on_submit=True):
+        col1, col2, col3 = st.columns(3)
         
-        if produits_df.empty:
-            st.error("❌ Aucun produit en stock !")
-        elif clients_df.empty:
-            st.error("❌ Aucun client enregistré !")
-        else:
-            with st.form("form_vente", clear_on_submit=True):
-                col1, col2 = st.columns(2)
-                with col1:
-                    produit_choisi = st.selectbox("📦 Produit", produits_df['nom'].tolist())
-                    client_choisi = st.selectbox("👤 Client", clients_df['nom'].tolist())
-                    quantite = st.number_input("🔢 Quantité", min_value=1, value=1)
-                with col2:
-                    mode_paiement = st.selectbox("💳 Mode de paiement", ["Espèces", "Mobile Money", "Carte bancaire", "Virement", "Crédit"])
-                    region = st.selectbox("📍 Région", ["Centre", "Littoral", "Nord", "Sud", "Est", "Ouest"])
-                    vendeur = st.text_input("👨‍💼 Vendeur", value="Vendeur 1")
-                remise = st.slider("💰 Remise (%)", 0, 50, 0)
-                
-                prix_unitaire = float(produits_df[produits_df['nom'] == produit_choisi]['prix_unitaire'].iloc[0])
-                prix_final = prix_unitaire * (1 - remise/100)
-                total = prix_final * quantite
-                st.info(f"💵 Prix: {prix_unitaire:,.0f} | Final: {prix_final:,.0f} | Total: **{total:,.0f} FCFA**")
-                
-                if st.form_submit_button("✅ Enregistrer", use_container_width=True):
-                    conn = sqlite3.connect('data/ventes.db')
-                    c = conn.cursor()
-                    produit_id = int(produits_df[produits_df['nom'] == produit_choisi]['id'].iloc[0])
-                    c.execute("INSERT INTO ventes (produit_id, quantite, prix_vente, remise, client, mode_paiement, region, vendeur) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                             (produit_id, quantite, prix_final, remise, client_choisi, mode_paiement, region, vendeur))
-                    c.execute("UPDATE produits SET stock = stock - ? WHERE id = ?", (quantite, produit_id))
-                    conn.commit()
-                    conn.close()
-                    st.success("✅ Vente enregistrée !")
-                    st.balloons()
-    
-    elif st.session_state.form_type == 'produit':
-        st.subheader("📦 Ajouter un Produit")
-        with st.form("form_produit", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            with col1:
-                nom = st.text_input("📝 Nom du produit")
-                categorie = st.selectbox("🏷️ Catégorie", ["Électronique", "Alimentation", "Vêtements", "Cosmétiques", "Meubles", "Autres"])
-                prix_unitaire = st.number_input("💰 Prix unitaire (FCFA)", min_value=0, step=500, value=10000)
-            with col2:
-                cout_revient = st.number_input("📊 Coût de revient (FCFA)", min_value=0, step=500, value=5000)
-                stock = st.number_input("📦 Stock initial", min_value=0, value=10)
-            if st.form_submit_button("✅ Enregistrer", use_container_width=True):
-                if nom and prix_unitaire > 0:
-                    conn = sqlite3.connect('data/ventes.db')
-                    conn.cursor().execute("INSERT INTO produits (nom, categorie, prix_unitaire, cout_revient, stock) VALUES (?, ?, ?, ?, ?)",
-                                          (nom, categorie, prix_unitaire, cout_revient, stock))
-                    conn.commit()
-                    conn.close()
-                    st.success(f"✅ Produit '{nom}' ajouté !")
-    
-    elif st.session_state.form_type == 'client':
-        st.subheader("👤 Ajouter un Client")
-        with st.form("form_client", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            with col1:
-                nom = st.text_input("👤 Nom complet")
-                email = st.text_input("📧 Email")
-                telephone = st.text_input("📱 Téléphone")
-            with col2:
-                ville = st.text_input("🏙️ Ville")
-                region = st.selectbox("📍 Région", ["Centre", "Littoral", "Nord", "Sud", "Est", "Ouest"])
-                type_client = st.selectbox("🏢 Type", ["Particulier", "Entreprise", "Grossiste", "Détaillant"])
-            if st.form_submit_button("✅ Enregistrer", use_container_width=True):
-                if nom:
-                    conn = sqlite3.connect('data/ventes.db')
-                    conn.cursor().execute("INSERT INTO clients (nom, email, telephone, ville, region, type_client) VALUES (?, ?, ?, ?, ?, ?)",
-                                          (nom, email, telephone, ville, region, type_client))
-                    conn.commit()
-                    conn.close()
-                    st.success(f"✅ Client '{nom}' ajouté !")
-    
-    # Affichage données
-    st.markdown("---")
-    tab1, tab2, tab3 = st.tabs(["🛍️ Ventes", "📦 Produits", "👥 Clients"])
-    with tab1:
-        conn = sqlite3.connect('data/ventes.db')
-        df = pd.read_sql("SELECT v.id, p.nom as produit, v.quantite, v.prix_vente, (v.quantite*v.prix_vente) as total, v.client, v.date_vente FROM ventes v JOIN produits p ON v.produit_id=p.id ORDER BY v.date_vente DESC LIMIT 50", conn)
-        conn.close()
-        if not df.empty:
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.info("Aucune vente")
-    with tab2:
-        conn = sqlite3.connect('data/ventes.db')
-        df = pd.read_sql("SELECT * FROM produits", conn)
-        conn.close()
-        if not df.empty:
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.info("Aucun produit")
-    with tab3:
-        conn = sqlite3.connect('data/ventes.db')
-        df = pd.read_sql("SELECT * FROM clients", conn)
-        conn.close()
-        if not df.empty:
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.info("Aucun client")
-
-# ==================== PAGE ANALYSE ====================
-elif page == "📈 Analyse descriptive":
-    st.title("📈 Analyse Descriptive des Ventes")
-    
-    conn = sqlite3.connect('data/ventes.db')
-    nb = pd.read_sql("SELECT COUNT(*) as count FROM ventes", conn)['count'][0]
-    
-    if nb == 0:
-        st.warning("⚠️ Aucune donnée. Chargez les données démo dans la barre latérale.")
-    else:
-        df = pd.read_sql("SELECT v.*, p.nom as produit_nom, p.categorie, p.cout_revient FROM ventes v JOIN produits p ON v.produit_id=p.id", conn)
-        conn.close()
-        
-        df['total_vente'] = df['quantite'] * df['prix_vente']
-        df['marge'] = df['total_vente'] - (df['cout_revient'] * df['quantite'])
-        df['date_vente'] = pd.to_datetime(df['date_vente'])
-        
-        total_ca = df['total_vente'].sum()
-        total_marge = df['marge'].sum()
-        panier_moyen = df['total_vente'].mean()
-        
-        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("💰 CA Total", f"{total_ca:,.0f} FCFA")
+            nom = st.text_input("🏷️ Nom du produit", placeholder="Ex: Coca-Cola 33cl")
         with col2:
-            st.metric("📊 Marge", f"{total_marge:,.0f} FCFA")
+            prix = st.number_input("💶 Prix de vente (€)", min_value=0.0, value=1.0, step=0.5)
         with col3:
-            st.metric("🛒 Panier Moyen", f"{panier_moyen:,.0f} FCFA")
-        with col4:
-            st.metric("🔢 Transactions", len(df))
+            categorie = st.selectbox("📂 Catégorie", [
+                "🥤 Boissons", "🥨 Snacks", "🍬 Confiseries", 
+                "🥫 Épicerie", "🧴 Hygiène", "📦 Autre"
+            ])
         
-        st.markdown("---")
+        ajouter = st.form_submit_button("✅ AJOUTER CE PRODUIT")
         
-        tab1, tab2 = st.tabs(["📈 Évolution", "🏷️ Catégories"])
-        
-        with tab1:
-            df_jour = df.groupby(df['date_vente'].dt.date).agg({'total_vente': 'sum', 'id': 'count'}).reset_index()
-            df_jour.columns = ['Date', 'CA', 'Nb_Ventes']
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                fig = px.line(df_jour, x='Date', y='CA', title='CA Journalier')
-                st.plotly_chart(fig, use_container_width=True)
-            with col2:
-                fig = px.bar(df_jour, x='Date', y='Nb_Ventes', title='Ventes par Jour')
-                st.plotly_chart(fig, use_container_width=True)
-        
-        with tab2:
-            df_cat = df.groupby('categorie').agg({'total_vente': 'sum', 'marge': 'sum'}).reset_index()
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                fig = px.pie(df_cat, values='total_vente', names='categorie', title='CA par Catégorie')
-                st.plotly_chart(fig, use_container_width=True)
-            with col2:
-                fig = px.bar(df_cat, x='categorie', y='marge', title='Marge par Catégorie', color='categorie')
-                st.plotly_chart(fig, use_container_width=True)
-        
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Télécharger données (CSV)", csv, "ventes.csv", "text/csv")
-
-# ==================== PAGE CLASSIFICATION ====================
-elif page == "🔍 Classification":
-    st.title("🔍 Classification Non-Supervisée (K-Means)")
+        if ajouter:
+            if nom == "":
+                st.error("❌ Le nom du produit est obligatoire.")
+            elif nom in [p["nom"] for p in st.session_state.produits]:
+                st.error("❌ Ce produit existe déjà.")
+            else:
+                st.session_state.produits.append({
+                    "nom": nom,
+                    "prix": prix,
+                    "categorie": categorie
+                })
+                st.success(f"✅ **{nom}** ajouté avec succès !")
+                st.rerun()
     
-    conn = sqlite3.connect('data/ventes.db')
-    nb = pd.read_sql("SELECT COUNT(*) as count FROM ventes", conn)['count'][0]
-    
-    if nb < 5:
-        st.warning("⚠️ Minimum 5 ventes requises.")
+    # Afficher le catalogue
+    if len(st.session_state.produits) > 0:
+        st.markdown(f"<h3 style='color: #FCD34D;'>📋 VOTRE CATALOGUE ({len(st.session_state.produits)} produits)</h3>", unsafe_allow_html=True)
+        
+        df = pd.DataFrame(st.session_state.produits)
+        st.dataframe(df, use_container_width=True)
+        
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            if st.button("🗑️ VIDER LE CATALOGUE"):
+                st.session_state.produits = []
+                st.session_state.ventes = {}
+                st.session_state.stocks = {}
+                st.rerun()
+        with col_b:
+            csv = df.to_csv(index=False)
+            st.download_button("📥 Exporter (CSV)", data=csv, file_name="catalogue.csv", mime="text/csv")
+        with col_c:
+            st.metric("💰 Prix moyen", f"{df['prix'].mean():.2f} €" if len(df) > 0 else "0 €")
     else:
-        df = pd.read_sql("SELECT v.*, p.nom as produit_nom, p.categorie, p.cout_revient FROM ventes v JOIN produits p ON v.produit_id=p.id", conn)
-        conn.close()
-        
-        df['total_vente'] = df['quantite'] * df['prix_vente']
-        df['marge'] = df['total_vente'] - (df['cout_revient'] * df['quantite'])
-        
-        df_clients = df.groupby('client').agg({'total_vente': ['sum', 'mean', 'count'], 'quantite': 'sum', 'marge': 'sum'}).reset_index()
-        df_clients.columns = ['Client', 'CA_Total', 'Panier_Moyen', 'Nb_Achats', 'Qté_Totale', 'Marge_Totale']
-        
-        if len(df_clients) >= 2:
-            features = ['CA_Total', 'Panier_Moyen', 'Nb_Achats', 'Qté_Totale']
-            X = df_clients[features].values
-            scaler = StandardScaler()
-            X_scaled = scaler.fit_transform(X)
-            
-            n_clusters = st.slider("Nombre de segments", 2, min(5, len(df_clients)), 3)
-            
-            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-            df_clients['Cluster'] = kmeans.fit_predict(X_scaled)
-            
-            segment_names = {0: "🌟 Premium", 1: "📈 Réguliers", 2: "🔄 Occasionnels", 3: "💰 Gros", 4: "📉 Faibles"}
-            df_clients['Segment'] = df_clients['Cluster'].map(segment_names)
-            
-            fig = px.scatter(df_clients, x='CA_Total', y='Nb_Achats', color='Segment', size='Panier_Moyen', hover_data=['Client'], title='Segmentation Clients')
-            st.plotly_chart(fig, use_container_width=True)
-            
-            st.subheader("📊 Caractéristiques des Segments")
-            stats = df_clients.groupby('Segment').agg({'Client': 'count', 'CA_Total': ['sum', 'mean'], 'Panier_Moyen': 'mean'}).round(2)
-            stats.columns = ['Nb Clients', 'CA Total', 'CA Moyen', 'Panier Moyen']
-            st.dataframe(stats, use_container_width=True)
+        st.info("📭 Aucun produit. Ajoutez votre premier produit ci-dessus.")
 
-# ==================== PAGE RÉDUCTION ====================
-elif page == "📉 Réduction dimension":
-    st.title("📉 Réduction de Dimensionnalité (PCA)")
+# ============================================================
+# ONGLET 3 : SAISIR LES VENTES
+# ============================================================
+elif onglet == "💰 Saisir les ventes":
     
-    conn = sqlite3.connect('data/ventes.db')
-    nb = pd.read_sql("SELECT COUNT(*) as count FROM ventes", conn)['count'][0]
+    st.markdown("<h2 style='color: #FCD34D;'>💰 SAISIE DES VENTES DE LA SEMAINE</h2>", unsafe_allow_html=True)
     
-    if nb < 5:
-        st.warning("⚠️ Minimum 5 ventes requises.")
+    if len(st.session_state.produits) == 0:
+        st.warning("⚠️ Ajoutez d'abord des produits dans l'onglet 'Gérer mes produits'.")
     else:
-        df = pd.read_sql("SELECT v.*, p.nom as produit_nom, p.categorie, p.cout_revient FROM ventes v JOIN produits p ON v.produit_id=p.id", conn)
-        conn.close()
+        st.markdown(f"<p style='color: #94A3B8;'>📅 Semaine du {datetime.now().strftime('%d/%m/%Y')}</p>", unsafe_allow_html=True)
         
-        df['total_vente'] = df['quantite'] * df['prix_vente']
-        df['marge'] = df['total_vente'] - (df['cout_revient'] * df['quantite'])
+        ventes_temp = {}
+        stocks_temp = {}
         
-        df_prod = df.groupby('produit_nom').agg({'total_vente': 'sum', 'quantite': 'sum', 'marge': 'sum', 'prix_vente': 'mean', 'remise': 'mean'}).reset_index()
-        df_cat = df[['produit_nom', 'categorie']].drop_duplicates()
-        df_prod = df_prod.merge(df_cat, on='produit_nom', how='left')
+        for produit in st.session_state.produits:
+            st.markdown(f"---")
+            col1, col2, col3 = st.columns([2, 1, 1])
+            
+            with col1:
+                st.markdown(f"<h4 style='color: #FCD34D;'>{produit['categorie']} • {produit['nom']} • {produit['prix']:.2f}€</h4>", unsafe_allow_html=True)
+            
+            with col2:
+                qte = st.number_input(f"📦 Vendus", min_value=0, value=0, key=f"v_{produit['nom']}")
+                ventes_temp[produit['nom']] = qte
+            
+            with col3:
+                stock = st.number_input(f"📋 En stock", min_value=0, value=0, key=f"s_{produit['nom']}")
+                stocks_temp[produit['nom']] = stock
         
-        features = ['total_vente', 'quantite', 'marge', 'prix_vente', 'remise']
-        X = df_prod[features].values
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
+        st.markdown(f"---")
         
-        pca = PCA()
-        X_pca = pca.fit_transform(X_scaled)
-        var_exp = pca.explained_variance_ratio_
+        if st.button("💾 ENREGISTRER LES VENTES"):
+            st.session_state.ventes = ventes_temp
+            st.session_state.stocks = stocks_temp
+            st.success("✅ Ventes enregistrées ! Passez à l'onglet 'Analyse & Résultats'.")
+            st.balloons()
+
+# ============================================================
+# ONGLET 4 : ANALYSE & RÉSULTATS
+# ============================================================
+elif onglet == "📈 Analyse & Résultats":
+    
+    st.markdown("<h2 style='color: #FCD34D;'>📈 ANALYSE DES VENTES</h2>", unsafe_allow_html=True)
+    
+    if len(st.session_state.ventes) == 0:
+        st.warning("⚠️ Saisissez d'abord vos ventes dans l'onglet 'Saisir les ventes'.")
+    else:
+        ventes = st.session_state.ventes
+        stocks = st.session_state.stocks
+        
+        # ---- BLOC 1 : PRODUIT STAR ET PRODUIT FAIBLE ----
+        st.markdown("<h3 style='color: #FCD34D;'>🏆 CLASSEMENT DES VENTES</h3>", unsafe_allow_html=True)
+        
+        qtes = {k: v for k, v in ventes.items() if v > 0}
         
         col1, col2 = st.columns(2)
+        
         with col1:
-            var_df = pd.DataFrame({'Composante': [f'PC{i+1}' for i in range(len(var_exp))], 'Variance (%)': (var_exp*100).round(2)})
-            st.dataframe(var_df, use_container_width=True)
-            fig = px.bar(x=[f'PC{i+1}' for i in range(len(var_exp))], y=var_exp*100, title='Variance par Composante')
-            st.plotly_chart(fig, use_container_width=True)
+            if qtes:
+                star = max(qtes, key=qtes.get)
+                st.success(f"🌟 **PRODUIT STAR : {star}**")
+                st.metric("Quantité vendue", f"{qtes[star]} unités")
+                st.info("💡 **Action :** Mettez ce produit en vitrine. Proposez une offre groupée pour amplifier les ventes.")
+            else:
+                st.info("Aucune vente enregistrée.")
+        
         with col2:
-            df_prod['PC1'] = X_pca[:, 0]
-            df_prod['PC2'] = X_pca[:, 1]
-            fig = px.scatter(df_prod, x='PC1', y='PC2', color='categorie', size='total_vente', hover_data=['produit_nom'], title='Projection PCA')
-            st.plotly_chart(fig, use_container_width=True)
+            if len(qtes) > 1:
+                faible = min(qtes, key=qtes.get)
+                st.error(f"📉 **PRODUIT FAIBLE : {faible}**")
+                st.metric("Quantité vendue", f"{qtes[faible]} unités")
+                st.info("💡 **Action :** Vérifiez son emplacement. Testez une réduction ou remplacez-le.")
+            elif len(qtes) == 1:
+                st.info("Un seul produit vendu.")
+        
+        st.divider()
+        
+        # ---- BLOC 2 : ALERTES STOCK ----
+        st.markdown("<h3 style='color: #FCD34D;'>⚠️ ALERTES STOCK</h3>", unsafe_allow_html=True)
+        
+        alerte = False
+        for nom, qte_vendue in ventes.items():
+            stock_restant = stocks.get(nom, 0)
+            if qte_vendue > 0 and stock_restant == 0:
+                st.error(f"🚨 **{nom}** : RUPTURE DE STOCK ! Commandez immédiatement.")
+                alerte = True
+            elif qte_vendue > 0 and stock_restant < 5:
+                st.warning(f"🛒 **{nom}** : Stock faible ({stock_restant} restants). Commandez bientôt.")
+                alerte = True
+        
+        if not alerte:
+            st.success("✅ Aucun problème de stock détecté.")
+        
+        st.divider()
+        
+        # ---- BLOC 3 : CHIFFRE D'AFFAIRES ----
+        st.markdown("<h3 style='color: #FCD34D;'>💶 CHIFFRE D'AFFAIRES</h3>", unsafe_allow_html=True)
+        
+        ca_total = 0
+        for produit in st.session_state.produits:
+            nom = produit["nom"]
+            prix = produit["prix"]
+            qte = ventes.get(nom, 0)
+            ca_produit = qte * prix
+            ca_total += ca_produit
+            if qte > 0:
+                st.write(f"**{nom}** : {qte} × {prix:.2f}€ = **{ca_produit:.2f}€**")
+        
+        col_metric, _ = st.columns([1, 2])
+        with col_metric:
+            st.metric("💰 CHIFFRE D'AFFAIRES TOTAL", f"{ca_total:.2f} €")
+        
+        st.divider()
+        
+        # ---- BLOC 4 : GRAPHIQUE ----
+        st.markdown("<h3 style='color: #FCD34D;'>📊 RÉPARTITION DES VENTES</h3>", unsafe_allow_html=True)
+        
+        ventes_filtrees = {k: v for k, v in ventes.items() if v > 0}
+        
+        if ventes_filtrees:
+            fig, ax = plt.subplots(figsize=(8, 8))
+            fig.patch.set_facecolor('#1E293B')
+            ax.set_facecolor('#1E293B')
             
+            couleurs = ['#F59E0B', '#EF4444', '#10B981', '#3B82F6', '#8B5CF6', '#EC4899']
+            wedges, texts, autotexts = ax.pie(
+                ventes_filtrees.values(),
+                labels=ventes_filtrees.keys(),
+                autopct='%1.1f%%',
+                colors=couleurs[:len(ventes_filtrees)],
+                startangle=90,
+                textprops={'color': 'white', 'fontsize': 12}
+            )
+            for autotext in autotexts:
+                autotext.set_color('#0F172A')
+                autotext.set_fontweight('bold')
+            
+            ax.set_title("PART DES VENTES PAR PRODUIT", color='white', fontsize=16, fontweight='bold')
+            st.pyplot(fig)
+        else:
+            st.info("Pas assez de données pour un graphique.")
+        
+        st.divider()
+        
+        # ---- BLOC 5 : SAUVEGARDE HISTORIQUE ----
+        st.markdown("<h3 style='color: #FCD34D;'>💾 SAUVEGARDE</h3>", unsafe_allow_html=True)
+        
+        if st.button("📥 SAUVEGARDER DANS L'HISTORIQUE"):
+            nouvelle_ligne = {
+                "Date": datetime.now().strftime("%Y-%m-%d"),
+                "CA_Total": round(ca_total, 2),
+                "Nb_Produits_Vendus": sum(ventes.values()),
+                "Produit_Star": max(qtes, key=qtes.get) if qtes else "Aucun"
+            }
+            for produit in st.session_state.produits:
+                nouvelle_ligne[f"{produit['nom']}_Qte"] = ventes.get(produit['nom'], 0)
+            
+            st.session_state.historique.append(nouvelle_ligne)
+            sauvegarder_historique()
+            st.success("✅ Données sauvegardées dans l'historique !")
+
+# ============================================================
+# ONGLET 5 : HISTORIQUE
+# ============================================================
+elif onglet == "📜 Historique":
+    
+    st.markdown("<h2 style='color: #FCD34D;'>📜 HISTORIQUE DES VENTES</h2>", unsafe_allow_html=True)
+    
+    if len(st.session_state.historique) == 0:
+        st.info("📭 Aucun historique. Sauvegardez des résultats depuis l'onglet 'Analyse & Résultats'.")
+    else:
+        df_hist = pd.DataFrame(st.session_state.historique)
+        
+        st.markdown(f"<p style='color: #94A3B8;'>📊 {len(df_hist)} semaines enregistrées</p>", unsafe_allow_html=True)
+        st.dataframe(df_hist, use_container_width=True)
+        
+        st.divider()
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("<h3 style='color: #FCD34D;'>📈 ÉVOLUTION DU CA</h3>", unsafe_allow_html=True)
+            if "CA_Total" in df_hist.columns and len(df_hist) > 1:
+                st.line_chart(df_hist, x="Date", y="CA_Total")
+            else:
+                st.info("Ajoutez plus de semaines pour voir l'évolution.")
+        
+        with col2:
+            st.markdown("<h3 style='color: #FCD34D;'>📊 PRODUITS STARS LES PLUS FRÉQUENTS</h3>", unsafe_allow_html=True)
+            if "Produit_Star" in df_hist.columns:
+                stars_count = df_hist["Produit_Star"].value_counts()
+                if len(stars_count) > 0:
+                    st.bar_chart(stars_count)
+        
+        st.divider()
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            csv_hist = df_hist.to_csv(index=False)
+            st.download_button("📥 TÉLÉCHARGER L'HISTORIQUE (CSV)", data=csv_hist, file_name="historique_complet.csv", mime="text/csv")
+        with col_b:
+            if st.button("🗑️ EFFACER L'HISTORIQUE"):
+                st.session_state.historique = []
+                if os.path.exists(FICHIER_HISTORIQUE):
+                    os.remove(FICHIER_HISTORIQUE)
+                st.rerun()
+
+# ============================================================
+# PIED DE PAGE
+# ============================================================
+st.divider()
+st.markdown("""
+<div style="text-align: center; color: #64748B; padding: 20px;">
+    <p>📊 <b>Analyse Ventes Pro</b> • Application développée pour le TP INF232 EC2</p>
+    <p>Intelligence Commerciale • Aide à la décision • Maximisation des profits</p>
+</div>
+""", unsafe_allow_html=True)
