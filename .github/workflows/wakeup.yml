@@ -1,0 +1,20 @@
+name: Garder l'app Streamlit éveillée
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  keep-awake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code du dépôt
+        uses: actions/checkout@v4
+
+      - name: Faire un commit vide pour réinitialiser le minuteur
+        run: |
+          git config user.name "VotreNom"
+          git config user.email "VotreEmail@example.com"
+          git commit --allow-empty -m "Commit automatique pour garder l'app éveillée"
+          git push
